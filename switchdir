@@ -10,17 +10,24 @@
 #	dir1		either the current or previous dir pointed to by symdir
 #	dir2		either the previous or current dir pointed to by symdir
 #
-# Normally symdir point to either dir1 or dir2.  This tool will remove the
-# one which symdir does NOT point at, rename newdir to that name and then
-# point symdir at that newly renamed directory.  The symdir always points
-# at either dir1 or dir2.  After this run, symdir points at the contents
-# of newdir which has been renamed dir1 or dir2.
+# This tool will cause symdir to point at newdir by replacing dir1 or dir2
+# with newdir.   The replacement selection of dir1 or dir2 depends on which
+# directory symdir does NOT initially point at.  If symdir does not point
+# at either dir1 or dir2, the older of the two or the one that exist or
+# dir1 is picked for replacement.
+#
+# Assuming that newdir, symdir, dir1 and dir2 all exist symdir always points
+# at something consistently thoughout the operation.
+#
+# Example of: switchdir newdir symdir dir1 dir2
 #
 # Before:		    After:
 #	symdir -> dir1		symdir -> dir2
 #	dir1			dir1	(former symdir pointer)
 #	dir2			dir2	(new symdir pointer, was newdir)
 #	newdir
+#
+# Example of: switchdir newerdir symdir dir1 dir2
 #
 # Before:		    After:
 #	symdir -> dir2		symdir -> dir1
@@ -30,10 +37,8 @@
 #
 # NOTE: The newdir must exist.
 #	The dir1 and dir2 (or their parent dirs if they do not exist)
-#	    and newdir must be in the same file system.
+#	    must be in the same file system.
 #	The symdir symlink can be anywhere.
-#	The symdir is always a valid symlink that points at a
-#	    complete directory tree.
 #
 # @(#) $Revision$
 # @(#) $Id$
@@ -69,6 +74,7 @@
 
 # parse args
 #
+export PATH="/bin:/usr/bin"
 if [ $# -ne 4 ]; then
     echo "usage: $0 newdir symdir dir1 dir2" 1>&2
     exit 1
@@ -77,25 +83,6 @@ newdir="$1"
 symdir="$2"
 dir1="$3"
 dir2="$4"
-
-# setup
-#
-if [ -x /bin/df ]; then
-    DF=/bin/df
-elif [ -x /bin/usr/df ]; then
-    DF=/usr/bin/df
-else
-    echo "$0: cannot find df in /bin or /usr/bin" 1>&2
-    exit 2
-fi
-if [ -x /bin/sed ]; then
-    SED=/bin/sed
-elif [ -x /bin/usr/sed ]; then
-    SED=/usr/bin/sed
-else
-    echo "$0: cannot find sed in /bin or /usr/bin" 1>&2
-    exit 3
-fi
 
 # samefs - return true of both args are on the same file system
 #
@@ -131,19 +118,19 @@ function samefs ()
 
     # obtain the file systems, return false on error
     #
-    fs1=`$DF "$1" 2>/dev/null`
+    fs1=`df "$1" 2>/dev/null`
     if [ $? -ne 0 ]; then
 	return 3;
     fi
-    fs2=`$DF "$2" 2>/dev/null`
+    fs2=`df "$2" 2>/dev/null`
     if [ $? -ne 0 ]; then
 	return 4;
     fi
 
     # reduce fs1 and fs2 to only the file system names
     #
-    fs1=`echo "$fs1" | $SED -n -e '$s/[	 ].*$//p'`
-    fs2=`echo "$fs2" | $SED -n -e '$s/[	 ].*$//p'`
+    fs1=`echo "$fs1" | sed -n -e '$s/[	 ].*$//p'`
+    fs2=`echo "$fs2" | sed -n -e '$s/[	 ].*$//p'`
     if [ -z "$fs1" -o -z "$fs2" ]; then
 	return 6;
     fi
@@ -229,7 +216,7 @@ if [ -e "$symdir" -a ! -L "$symdir" ]; then
     exit 6
 fi
 
-# edir1 and edir2 are either the dir args that exist, or their dirnames
+# set edir1 and edir2 to either the dir args that exist, or their dirnames
 # that must exist.  In no case can they be symlinks.
 #
 if [ -e "$dir1" ]; then
@@ -270,30 +257,25 @@ if ! samefs "$edir1" "$edir2"; then
     exit 11
 fi
 
-# newdir must be in the same file system as dir1 or dir2 or their parent dirs
-#
-if ! samefs "$newdir" "$edir1"; then
-    echo "$0: newdir: $newdir and dir1: $dir1 are or cannot be in same fs" 1>&2
-    exit 12
-fi
-
 #################
 # final pre-setup
 #################
 
-# if symdir is missing, initially point it down at the newer of dir1 or dir2
-# or to the one that exists, or to dir1 neither exist
+# If symdir is missing, initially point it down at the newer of dir1 or dir2
+# or to the one that exists, or to dir1 neither exist.  This is so that
+# we will replace the older if dir1 or dir2 or replace the one that is
+# missing or replace dir1 (in the case of both are missing).
 #
 if [ ! -e "$symdir" -a ! -L "$symdir" ]; then
     if newer "$dir1" "$dir2"; then
 	ln -s -f "$dir1" "$symdir"
-	if [ ! "$dir1" -ef "$symdir" ]; then
+	if [ $? -ne 0 ]; then
 	    echo "$0: cannot initially: ln -s -f $dir1 $symdir" 1>&2
 	    exit 13
 	fi
     else
 	ln -s -f "$dir2" "$symdir"
-	if [ ! "$dir2" -ef "$symdir" ]; then
+	if [ $? -ne 0 ]; then
 	    echo "$0: cannot initially: ln -s -f $dir2 $symdir" 1>&2
 	    exit 14
 	fi
@@ -332,16 +314,16 @@ if [ "$symdir" -ef "$dir1" ]; then
 
     # dir2 does no longer exists, so move newdir into dir2's place
     #
-    mv "$newdir" "$dir2"
-    if [ ! -e "$dir2" ]; then
+    mv -f "$newdir" "$dir2"
+    if [ $? -ne 0 -o ! -e "$dir2" ]; then
 	echo "$0: cannot move newdir: $newdir into dir2's place: $dir2" 1>&2
 	exit 16
     fi
 
     # point symdir at the dir2, the newly renamed newdir
     #
-    ln -s -f "$dir2" "$symdir"
-    if [ ! "$dir2" -ef "$symdir" ]; then
+    ln -s -f -n "$dir2" "$symdir"
+    if [ $? -ne 0 -o ! "$dir2" -ef "$symdir" ]; then
 	echo "$0: cannot re-symlink: $symdir to dir2: $dir2" 1>&2
 	exit 17
     fi
@@ -361,22 +343,36 @@ else
 
     # dir1 does no longer exists, so move newdir into dir1's place
     #
-    mv "$newdir" "$dir1"
-    if [ ! -e "$dir1" ]; then
+    mv -f "$newdir" "$dir1"
+    if [ $? -ne 0 -o ! -e "$dir1" ]; then
 	echo "$0: cannot move newdir: $newdir into dir1's place: $dir1" 1>&2
 	exit 19
     fi
 
     # point symdir at the dir1, the newly renamed newdir
     #
-    ln -s -f "$dir1" "$symdir"
-    if [ ! "$dir1" -ef "$symdir" ]; then
+    ln -s -f -n "$dir1" "$symdir"
+    if [ $? -ne 0 -o ! "$dir1" -ef "$symdir" ]; then
 	echo "$0: cannot re-symlink: $symdir to dir1: $dir1" 1>&2
 	exit 20
     fi
 fi
 
 ##########
+# paranioa
+##########
+
+if [ ! -e "$symdir" -o ! -L "$symdir" ]; then
+    echo "$0: symdir: $symdir is no longer a symlink that points somewhere" 1>&2
+    exit 21
+fi
+if [ -e "$newdir" ]; then
+    echo "$0: warning: final cleanup of old: $newdir failed" 1>&2
+    exit 22
+fi
+
+##########
 # All done!!! - Jessica Noll, Age 2
 ##########
+
 exit 0
