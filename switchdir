@@ -1,0 +1,382 @@
+#!/bin/bash -
+#
+# switchdir - switch a directory symlink to a new directory
+#
+# usage:
+#	switchdir newdir symdir dir1 dir2
+#
+#	newdir		the new directory to which symdir should point
+#	symdir		a symlink that point to dir1 or dir2
+#	dir1		either the current or previous dir pointed to by symdir
+#	dir2		either the previous or current dir pointed to by symdir
+#
+# Normally symdir point to either dir1 or dir2.  This tool will remove the
+# one which symdir does NOT point at, rename newdir to that name and then
+# point symdir at that newly renamed directory.  The symdir always points
+# at either dir1 or dir2.  After this run, symdir points at the contents
+# of newdir which has been renamed dir1 or dir2.
+#
+# Before:		    After:
+#	symdir -> dir1		symdir -> dir2
+#	dir1			dir1	(former symdir pointer)
+#	dir2			dir2	(new symdir pointer, was newdir)
+#	newdir
+#
+# Before:		    After:
+#	symdir -> dir2		symdir -> dir1
+#	dir1			dir1	(new symdir pointer, was newerdir)
+#	dir2			dir2	(old symdir pointer, was newdir)
+#	newerdir
+#
+# NOTE: The newdir must exist.
+#	The dir1 and dir2 (or their parent dirs if they do not exist)
+#	    and newdir must be in the same file system.
+#	The symdir symlink can be anywhere.
+#	The symdir is always a valid symlink that points at a
+#	    complete directory tree.
+#
+# @(#) $Revision$
+# @(#) $Id$
+# @(#) $Source$
+#
+# Copyright (c) 2000 by Landon Curt Noll.  All Rights Reserved.
+#
+# Permission to use, copy, modify, and distribute this software and
+# its documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright, this permission notice and text
+# this comment, and the disclaimer below appear in all of the following:
+#
+#       supporting documentation
+#       source copies
+#       source works derived from this source
+#       binaries derived from this source or from derived source
+#
+# LANDON CURT NOLL DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
+# INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO
+# EVENT SHALL LANDON CURT NOLL BE LIABLE FOR ANY SPECIAL, INDIRECT OR
+# CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF
+# USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+# OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+# PERFORMANCE OF THIS SOFTWARE.
+#
+# chongo <was here> /\oo/\
+#
+# Share and enjoy!
+
+################
+# initialization
+################
+
+# parse args
+#
+if [ $# -ne 4 ]; then
+    echo "usage: $0 newdir symdir dir1 dir2" 1>&2
+    exit 1
+fi
+newdir="$1"
+symdir="$2"
+dir1="$3"
+dir2="$4"
+
+# setup
+#
+if [ -x /bin/df ]; then
+    DF=/bin/df
+elif [ -x /bin/usr/df ]; then
+    DF=/usr/bin/df
+else
+    echo "$0: cannot find df in /bin or /usr/bin" 1>&2
+    exit 2
+fi
+if [ -x /bin/sed ]; then
+    SED=/bin/sed
+elif [ -x /bin/usr/sed ]; then
+    SED=/usr/bin/sed
+else
+    echo "$0: cannot find sed in /bin or /usr/bin" 1>&2
+    exit 3
+fi
+
+# samefs - return true of both args are on the same file system
+#
+# usage:
+#	samefs /path/to/something /path/of/something/else
+#
+# returns:
+#	0	both args are on the same file system
+#	1 	both args exist but on different file systems
+#
+#	2	one arg does not exist
+#	3	unable to determine file system of 1st arg
+#	4	unable to determine file system of 2nd arg
+#	5	wrong number of args
+#	6	internal error
+#
+function samefs ()
+{
+    local fs1;	# file system of 1st arg
+    local fs2;	# file system of 2nd arg
+
+    # parse args
+    #
+    if [ $# -ne 2 ]; then
+	return 5;
+    fi
+
+    # return false if neither exist
+    #
+    if [ ! -e "$1" -o ! -e "$2" ]; then
+	return 2;
+    fi
+
+    # obtain the file systems, return false on error
+    #
+    fs1=`$DF "$1" 2>/dev/null`
+    if [ $? -ne 0 ]; then
+	return 3;
+    fi
+    fs2=`$DF "$2" 2>/dev/null`
+    if [ $? -ne 0 ]; then
+	return 4;
+    fi
+
+    # reduce fs1 and fs2 to only the file system names
+    #
+    fs1=`echo "$fs1" | $SED -n -e '$s/[	 ].*$//p'`
+    fs2=`echo "$fs2" | $SED -n -e '$s/[	 ].*$//p'`
+    if [ -z "$fs1" -o -z "$fs2" ]; then
+	return 6;
+    fi
+
+    # return true only if both strings match
+    #
+    if [ "$fs1" = "$fs2" ]; then
+	return 0;
+    fi
+    return 1;
+}
+
+# newer - return new newer (mod file) of two args
+#
+# usage:
+#	newer arg1 arg2
+#
+# returns:
+#	0	1st arg is newer or 2nd arg does not exist or both args missing
+#	1	2nd arg is newer or 1st arg does not exist
+#
+function newer ()
+{
+    # parse args
+    #
+    if [ $# -ne 2 ]; then
+	# wrong arg count, so just pretend our answer it the 1st arg
+	return 0;
+
+    # case: arg2 does not exist
+    #
+    elif [ ! -e "$2" ]; then
+	# only arg1 exists, or neither exists so we return arg1 anyway
+	return 0;
+
+    # case: arg2 exists but arg1 does not exist
+    #
+    elif [ ! -e "$1" ]; then
+	# return as if the 2nd arg is newer
+	return 1;
+
+    # case: both exists so return the newer
+    elif [ "$2" -nt "$1" ]; then
+	# 2nd arg is newer
+	return 1;
+    fi
+    # 1st arg is newer
+    return 0;
+}
+
+#################
+# firewall checks
+#
+# The newdir must exist and be a directory.  A real directory, not a symlink.
+#
+# If dir1 and/or dir2 does not exist, then their patent dirs must exist.
+#
+# If dir1 and dir2 exist, then they must not be a symlink.  If either does
+# not exist, then their patent dirs must not be a symlink.
+#
+# The dir1 arg (or its parent directory if it does not exist) and the dir2
+# arg (or its parent directory if it does not exist) and the newdir must
+# all be in the same directory so that the mv will be an atomic rename.
+#################
+
+# newdir must exist and be a directory, not a symlink to a directory
+#
+if [ -L "$newdir" ]; then
+    echo "$0: newdir: $newdir may not be a symbolic link" 1>&2
+    exit 4
+elif [ ! -d "$newdir" ]; then
+    echo "$0: newdir: $newdir is not a directory" 1>&2
+    exit 5
+fi
+
+# object is symdir exists but is not a symlink
+#
+# We do not want to deal with symlink being a file, dir, special file ...
+# only the same where symdir is a symlink or is missing.
+#
+if [ -e "$symdir" -a ! -L "$symdir" ]; then
+    echo "$0: symdir: $symdir exists and is not a symlink" 1>&2
+    exit 6
+fi
+
+# edir1 and edir2 are either the dir args that exist, or their dirnames
+# that must exist.  In no case can they be symlinks.
+#
+if [ -e "$dir1" ]; then
+    edir1="$dir1"
+else
+    edir1=`dirname "$dir1"`
+fi
+#
+if [ -z "$edir1" -o ! -e "$edir1" ]; then
+    echo "$0: dir1: $dir1 does not exist, nor does its parent directory" 1>&2
+    exit 7
+fi
+if [ -L "$edir1" ]; then
+    echo "$0: dir1: $dir1 is a symlink or its parent is a symlink" 1>&2
+    exit 8
+fi
+#
+if [ -e "$dir2" ]; then
+    edir2="$dir2"
+else
+    edir2=`dirname "$dir2"`
+fi
+#
+if [ -z "$edir2" -o ! -e "$edir2" ]; then
+    echo "$0: dir2: $dir2 does not exist, nor does its parent directory" 1>&2
+    exit 9
+fi
+if [ -L "$edir2" ]; then
+    echo "$0: dir2: $dir2 is a symlink or its parent is a symlink" 1>&2
+    exit 10
+fi
+
+# dir1 and dir2 must be on the same file systems if they both exist
+# if either does not exist, then their parent directory file system must match
+#
+if ! samefs "$edir1" "$edir2"; then
+    echo "$0: dir1: $dir1 and dir2: $dir2 are or cannot be in same fs" 1>&2
+    exit 11
+fi
+
+# newdir must be in the same file system as dir1 or dir2 or their parent dirs
+#
+if ! samefs "$newdir" "$edir1"; then
+    echo "$0: newdir: $newdir and dir1: $dir1 are or cannot be in same fs" 1>&2
+    exit 12
+fi
+
+#################
+# final pre-setup
+#################
+
+# if symdir is missing, initially point it down at the newer of dir1 or dir2
+# or to the one that exists, or to dir1 neither exist
+#
+if [ ! -e "$symdir" -a ! -L "$symdir" ]; then
+    if newer "$dir1" "$dir2"; then
+	ln -s -f "$dir1" "$symdir"
+	if [ ! "$dir1" -ef "$symdir" ]; then
+	    echo "$0: cannot initially: ln -s -f $dir1 $symdir" 1>&2
+	    exit 13
+	fi
+    else
+	ln -s -f "$dir2" "$symdir"
+	if [ ! "$dir2" -ef "$symdir" ]; then
+	    echo "$0: cannot initially: ln -s -f $dir2 $symdir" 1>&2
+	    exit 14
+	fi
+    fi
+fi
+
+###############
+# ready to work
+#
+# At this point, symdir exists and points at something.  We know that
+# it is possible to rename newdir to dir1 or dir2 after they have been
+# removed.
+#
+# If symdir points at dir1, we move newdir into dir2's place and
+# re-symlink symdir at dir2 (now the renamed newdir).
+#
+# If symdir points at dir2, we move newdir into dir1's place and
+# re-symlink symdir at dir1 (now the renamed newdir).
+#
+# It is possible that symdir currently points at neither dir1 nor dir2,
+# in which case we will act as if dir2 existed, move newdir into dir1's
+# place and re-symlink symdir at dir1 (now the renamed newdir).
+###############
+
+# case: symdir currently points at dir1 - move newdir in the place of dir2
+#
+if [ "$symdir" -ef "$dir1" ]; then
+
+    # get rid of dir2
+    #
+    rm -rf "$dir2"
+    if [ -e "$dir2" ]; then
+	echo "$0: cannot remove dir2: $dir2" 1>&2
+	exit 15
+    fi
+
+    # dir2 does no longer exists, so move newdir into dir2's place
+    #
+    mv "$newdir" "$dir2"
+    if [ ! -e "$dir2" ]; then
+	echo "$0: cannot move newdir: $newdir into dir2's place: $dir2" 1>&2
+	exit 16
+    fi
+
+    # point symdir at the dir2, the newly renamed newdir
+    #
+    ln -s -f "$dir2" "$symdir"
+    if [ ! "$dir2" -ef "$symdir" ]; then
+	echo "$0: cannot re-symlink: $symdir to dir2: $dir2" 1>&2
+	exit 17
+    fi
+
+# case: symdir currently points at dir2 - move newdir in the place if dir1
+# case: symdir points at neither - move newdir in the place of dir1
+#
+else
+
+    # get rid of dir1
+    #
+    rm -rf "$dir1"
+    if [ -e "$dir1" ]; then
+	echo "$0: cannot remove dir1: $dir1" 1>&2
+	exit 18
+    fi
+
+    # dir1 does no longer exists, so move newdir into dir1's place
+    #
+    mv "$newdir" "$dir1"
+    if [ ! -e "$dir1" ]; then
+	echo "$0: cannot move newdir: $newdir into dir1's place: $dir1" 1>&2
+	exit 19
+    fi
+
+    # point symdir at the dir1, the newly renamed newdir
+    #
+    ln -s -f "$dir1" "$symdir"
+    if [ ! "$dir1" -ef "$symdir" ]; then
+	echo "$0: cannot re-symlink: $symdir to dir1: $dir1" 1>&2
+	exit 20
+    fi
+fi
+
+##########
+# All done!!! - Jessica Noll, Age 2
+##########
+exit 0
