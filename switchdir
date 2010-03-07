@@ -40,9 +40,9 @@
 #	    must be in the same file system.
 #	The symdir symlink can be anywhere.
 #
-# @(#) $Revision$
-# @(#) $Id$
-# @(#) $Source$
+# @(#) $Revision: 1.2 $
+# @(#) $Id: switchdir,v 1.2 2000/05/27 08:39:11 chongo Exp $
+# @(#) $Source: /usr/local/src/cmd/switchdir/RCS/switchdir,v $
 #
 # Copyright (c) 2000 by Landon Curt Noll.  All Rights Reserved.
 #
@@ -118,11 +118,11 @@ function samefs ()
 
     # obtain the file systems, return false on error
     #
-    fs1=`df "$1" 2>/dev/null`
+    fs1=`df -P "$1" 2>/dev/null`
     if [ $? -ne 0 ]; then
 	return 3;
     fi
-    fs2=`df "$2" 2>/dev/null`
+    fs2=`df -P "$2" 2>/dev/null`
     if [ $? -ne 0 ]; then
 	return 4;
     fi
