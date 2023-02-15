@@ -2,9 +2,9 @@
 #
 # switchdir - switch a directory symlink to a new directory
 #
-# @(#) $Revision: 1.3 $
-# @(#) $Id: switchdir,v 1.3 2010/03/07 01:24:12 chongo Exp $
-# @(#) $Source: /usr/local/src/cmd/switchdir/RCS/switchdir,v $
+# @(#) $Revision: 1.4 $
+# @(#) $Id: switchdir,v 1.4 2012/04/08 02:40:20 root Exp $
+# @(#) $Source: /usr/local/src/bin/switchdir/RCS/switchdir,v $
 #
 # usage:
 #	switchdir [-t] newdir symdir dir1 dir2

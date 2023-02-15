@@ -2,9 +2,9 @@
 #
 # switchdir - swtich a dir symlink to a new directory
 #
-# @(#) $Revision: 1.1 $
-# @(#) $Id: Makefile,v 1.1 2000/05/27 08:11:18 chongo Exp chongo $
-# @(#) $Source: /usr/local/src/cmd/switchdir/RCS/Makefile,v $
+# @(#) $Revision: 1.2 $
+# @(#) $Id: Makefile,v 1.2 2000/05/27 08:40:53 chongo Exp $
+# @(#) $Source: /usr/local/src/bin/switchdir/RCS/Makefile,v $
 #
 # Copyright (c) 1989 by Landon Curt Noll.  All Rights Reserved.
 #
