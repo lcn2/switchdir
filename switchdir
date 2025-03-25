@@ -1,52 +1,8 @@
-#!/bin/bash -
+#!/usr/bin/env bash
 #
 # switchdir - switch a directory symlink to a new directory
 #
-# @(#) $Revision: 1.4 $
-# @(#) $Id: switchdir,v 1.4 2012/04/08 02:40:20 root Exp $
-# @(#) $Source: /usr/local/src/bin/switchdir/RCS/switchdir,v $
-#
-# usage:
-#	switchdir [-t] newdir symdir dir1 dir2
-#
-#	-t		time sync identical files to oldest time
-#
-#	newdir		the new directory to which symdir should point
-#	symdir		a symlink that points to dir1 or dir2
-#	dir1		either the current or previous directory pointed to by symdir
-#	dir2		either the previous or current directory pointed to by symdir
-#
-# This tool will cause symdir to point at newdir by replacing dir1 or dir2
-# with newdir.   The replacement selection of dir1 or dir2 depends on which
-# directory symdir does NOT initially point at.  If symdir does not point
-# at either dir1 or dir2, the older of the two or the one that exist or
-# dir1 is picked for replacement.
-#
-# Assuming that newdir, symdir, dir1 and dir2 all exist symdir always points
-# at something consistently thoughout the operation.
-#
-# Example of: switchdir newdir symdir dir1 dir2
-#
-# Before:		    After:
-#	symdir -> dir1		symdir -> dir2
-#	dir1			dir1	(former symdir pointer)
-#	dir2			dir2	(new symdir pointer, was newdir)
-#	newdir
-#
-# Example of: switchdir newerdir symdir dir1 dir2
-#
-# Before:		    After:
-#	symdir -> dir2		symdir -> dir1
-#	dir1			dir1	(new symdir pointer, was newerdir)
-#	dir2			dir2	(old symdir pointer, was newdir)
-#	newerdir
-#
-# NOTE: The newdir must exist.
-#	The dir1 and dir2 (or their parent dirs if they do not exist)
-#	    must be in the same file system.
-#	The symdir symlink can be anywhere.
-
-# Copyright (c) 2000-2012 by Landon Curt Noll.  All Rights Reserved.
+# Copyright (c) 1989,2000,2010,2012,2023,2025 by Landon Curt Noll.  All Rights Reserved.
 #
 # Permission to use, copy, modify, and distribute this software and
 # its documentation for any purpose and without fee is hereby granted,
@@ -66,30 +22,108 @@
 # OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 # PERFORMANCE OF THIS SOFTWARE.
 #
-# chongo <was here> /\oo/\
+# chongo (Landon Curt Noll) /\oo/\
 #
-# Share and enjoy!
+# http://www.isthe.com/chongo/index.html
+# https://github.com/lcn2
+#
+# Share and enjoy!  :-)
+
 
 ################
 # initialization
 ################
 
+export VERSION="1.4.1 2025-03-25"
+NAME=$(basename "$0")
+export NAME
+#
+export V_FLAG=0
+export TIMESYNC=""
+#
+export NOOP=
+export DO_NOT_PROCESS=
+
+
+# usage
+#
+export USAGE="usage: $0 [-h] [-v level] [-V] [-n] [-N] [-t] newdir symdir dir1 dir2
+
+    -h          print help message and exit
+    -v level    set verbosity level (def level: $V_FLAG)
+    -V          print version string and exit
+
+    -n          go thru the actions, but do not update any files (def: do the action)
+    -N          do not process anything, just parse arguments (def: process something)
+
+    -t		time sync identical files to oldest time
+
+    newdir		the new directory to which symdir should point
+    symdir		a symlink that points to dir1 or dir2
+    dir1		either the current or previous directory pointed to by symdir
+    dir2		either the previous or current directory pointed to by symdir
+
+$NAME version: $VERSION"
+
+
+# parse command line
+#
+while getopts :hv:VnNt flag; do
+  case "$flag" in
+    h) echo "$USAGE"
+	exit 2
+	;;
+    v) V_FLAG="$OPTARG"
+	;;
+    V) echo "$VERSION"
+	exit 2
+	;;
+    n) NOOP="-n"
+	;;
+    N) DO_NOT_PROCESS="-N"
+	;;
+    t) TIMESYNC=true
+	;;
+    \?) echo "$0: ERROR: invalid option: -$OPTARG" 1>&2
+	echo 1>&2
+	echo "$USAGE" 1>&2
+	exit 3
+	;;
+    :) echo "$0: ERROR: option -$OPTARG requires an argument" 1>&2
+	echo 1>&2
+	echo "$USAGE" 1>&2
+	exit 3
+	;;
+    *) echo "$0: ERROR: unexpected value from getopts: $flag" 1>&2
+	echo 1>&2
+	echo "$USAGE" 1>&2
+	exit 3
+	;;
+  esac
+done
+if [[ $V_FLAG -ge 1 ]]; then
+    echo "$0: debug[1]: debug level: $V_FLAG" 1>&2
+fi
+#
+# remove the options
+#
+shift $(( OPTIND - 1 ));
+#
+# verify arg count
+#
+if [[ $# -ne 4 ]]; then
+    echo "$0: ERROR: expected 4 args, found: $#" 1>&2
+    echo "$USAGE" 1>&2
+    exit 3
+fi
+#
 # parse args
 #
-export PATH="/bin:/usr/bin"
-TIMESYNC=
-if [[ $# -gt 0 && "$1" == "-t" ]]; then
-    shift
-    TIMESYNC=true
-fi
-if [[ $# -ne 4 ]]; then
-    echo "usage: $0 newdir symdir dir1 dir2" 1>&2
-    exit 1
-fi
-newdir="$1"
-symdir="$2"
-dir1="$3"
-dir2="$4"
+export newdir="$1"
+export symdir="$2"
+export dir1="$3"
+export dir2="$4"
+
 
 # samefs - return true of both args are on the same file system
 #
@@ -98,7 +132,7 @@ dir2="$4"
 #
 # returns:
 #	0	both args are on the same file system
-#	1 	both args exist but on different file systems
+#	1	both args exist but on different file systems
 #
 #	2	one arg does not exist
 #	3	unable to determine file system of 1st arg
@@ -127,11 +161,13 @@ function samefs ()
     # reduce fs1 and fs2 to only the file system names
     #
     fs1=$(df --portability "$1" 2>/dev/null | tail -1 | awk '{print $NF;}')
-    if [[ $? -ne 0 ]]; then
+    status="$?"
+    if [[ $status -ne 0 ]]; then
 	return 3;
     fi
     fs2=$(df --portability "$2" 2>/dev/null | tail -1 | awk '{print $NF;}')
-    if [[ $? -ne 0 ]]; then
+    status="$?"
+    if [[ $status -ne 0 ]]; then
 	return 4;
     fi
     #
@@ -146,6 +182,7 @@ function samefs ()
     fi
     return 1;
 }
+
 
 # newer - return new newer (mod file) of two args
 #
@@ -185,6 +222,7 @@ function newer ()
     return 0;
 }
 
+
 #################
 # firewall checks
 #
@@ -206,15 +244,19 @@ function newer ()
 #
 case "$newdir" in
 */*) echo "$0: newdir must not contain a /: $newdir"; exit 2 ;;
+*) ;;
 esac
 case "$symdir" in
 */*) echo "$0: symdir must not contain a /: $symdir"; exit 3 ;;
+*) ;;
 esac
 case "$dir1" in
 */*) echo "$0: dir1 must not contain a /: $dir1"; exit 4 ;;
+*) ;;
 esac
 case "$dir2" in
 */*) echo "$0: dir2 must not contain a /: $dir2"; exit 5 ;;
+*) ;;
 esac
 
 # newdir must exist and be a directory, not a symlink to a directory
@@ -226,6 +268,7 @@ elif [[ ! -d "$newdir" ]]; then
     echo "$0: newdir: $newdir is not a directory" 1>&2
     exit 7
 fi
+
 
 # object is symdir exists but is not a symlink
 #
@@ -278,6 +321,7 @@ if ! samefs "$edir1" "$edir2"; then
     exit 13
 fi
 
+
 #################
 # final pre-setup
 #################
@@ -290,18 +334,21 @@ fi
 if [[ ! -e "$symdir" && ! -L "$symdir" ]]; then
     if newer "$dir1" "$dir2"; then
 	ln -s -f "$dir1" "$symdir"
-	if [[ $? -ne 0 ]]; then
+	status="$?"
+	if [[ $status -ne 0 ]]; then
 	    echo "$0: cannot initially: ln -s -f $dir1 $symdir" 1>&2
 	    exit 14
 	fi
     else
 	ln -s -f "$dir2" "$symdir"
-	if [[ $? -ne 0 ]]; then
+	status="$?"
+	if [[ $status -ne 0 ]]; then
 	    echo "$0: cannot initially: ln -s -f $dir2 $symdir" 1>&2
 	    exit 15
 	fi
     fi
 fi
+
 
 ###############
 # ready to work
@@ -379,8 +426,9 @@ else
     fi
 fi
 
+
 ##########
-# paranioa
+# paranoia
 ##########
 
 if [[ ! -e "$symdir" || ! -L "$symdir" ]]; then
@@ -392,6 +440,7 @@ if [[ -e "$newdir" ]]; then
     exit 23
 fi
 
+
 #################
 # time sync of -t
 #################
@@ -400,7 +449,7 @@ if [[ -n "$TIMESYNC" ]]; then
 
     # look for identical files
     #
-    (cd "$dir1"; find . -type f -print 2>/dev/null) | while read i; do
+    (cd "$dir1" && find . -type f -print 2>/dev/null) | while read -r i; do
 
 	# process only if they exist and are identical
 	#
@@ -420,6 +469,7 @@ if [[ -n "$TIMESYNC" ]]; then
 	fi
     done
 fi
+
 
 ##########
 # All done!!! - Jessica Noll, Age 2
