@@ -45,7 +45,7 @@ sudo make install
 
 # To use
 
-```sh
+```
 /usr/local/bin/switchdir [-h] [-v level] [-V] [-n] [-N] [-t] newdir symdir dir1 dir2
 
     -h          print help message and exit
